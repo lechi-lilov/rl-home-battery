@@ -1,0 +1,21 @@
+# Primary tariff: KEPCO residential time-of-use ("주택용 계시별", Jeju Special Self-Governing Province).
+# Source: KEPCO tariff table effective 2023-05-16 ("23.05.16 시행 전기요금표 종합"), residential TOU row.
+# Prices are energy charges in won/kWh. The basic charge (4,310 won/kW) is a fixed item that does not
+# depend on battery use, so it is not part of the reward. The super-user surcharge applies above
+# 1,000 kWh/month, which a single home in this dataset never reaches, so it is ignored.
+name: KEPCO residential TOU (Jeju)
+source: KEPCO tariff table effective 2023-05-16, residential TOU (Jeju)
+
+# Hour bands, same in every season. Ranges are [start, end) in clock hours; start > end wraps midnight.
+bands:
+  light: [[22, 24], [0, 8]]
+  mid: [[8, 16]]
+  peak: [[16, 22]]
+
+seasons:
+  spring_fall:            # Mar-May, Sep-Oct
+    months: [3, 4, 5, 9, 10]
+    prices: {light: 125.8, mid: 153.8, peak: 172.4}
+  summer_winter:          # Jan-Feb, Jun-Aug, Nov-Dec
+    months: [1, 2, 6, 7, 8, 11, 12]
+    prices: {light: 138.7, mid: 184.7, peak: 220.5}

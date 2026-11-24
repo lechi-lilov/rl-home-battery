@@ -1,0 +1,6 @@
+{
+  "soc_target": 0.5,
+  "charge_frac": 0.5,
+  "discharge_frac": 0.1,
+  "mid_selfcons": true
+}

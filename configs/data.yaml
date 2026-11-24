@@ -1,0 +1,74 @@
+source: Ausgrid Solar Home Electricity Data (CC BY 3.0 AU), 2010-07-01..2013-06-30
+selection_rule: all channels complete for 1096 days and daily GC+CL load within the
+  25-75th percentile of all 300 houses; rng seed 42
+resolution: hourly (kWh per hour == mean kW)
+load_definition: GC + CL (CL only where present); pv = GG
+pool_houses:
+- 280
+- 25
+- 235
+- 113
+- 198
+- 211
+- 184
+- 29
+- 112
+- 53
+heldout_houses:
+- 208
+- 26
+- 222
+- 143
+houses:
+  280:
+    pv_kwp: 1.5
+    has_controlled_load: false
+  25:
+    pv_kwp: 1.02
+    has_controlled_load: false
+  235:
+    pv_kwp: 1.0
+    has_controlled_load: true
+  113:
+    pv_kwp: 1.5
+    has_controlled_load: false
+  198:
+    pv_kwp: 1.0
+    has_controlled_load: false
+  211:
+    pv_kwp: 1.5
+    has_controlled_load: false
+  184:
+    pv_kwp: 1.05
+    has_controlled_load: true
+  29:
+    pv_kwp: 1.7
+    has_controlled_load: true
+  112:
+    pv_kwp: 1.92
+    has_controlled_load: true
+  53:
+    pv_kwp: 1.48
+    has_controlled_load: true
+  208:
+    pv_kwp: 1.44
+    has_controlled_load: true
+  26:
+    pv_kwp: 1.02
+    has_controlled_load: false
+  222:
+    pv_kwp: 1.05
+    has_controlled_load: false
+  143:
+    pv_kwp: 2.1
+    has_controlled_load: false
+splits:
+  train:
+  - '2010-07-01'
+  - '2012-03-31'
+  val:
+  - '2012-04-01'
+  - '2012-06-30'
+  test:
+  - '2012-07-01'
+  - '2013-06-30'

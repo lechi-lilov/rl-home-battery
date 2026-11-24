@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# raw data (large, re-creatable with scripts/download_data.py)
+data/raw/
+
+# private notes and editor settings
+claude.md
+CLAUDE.md
+.vscode/
