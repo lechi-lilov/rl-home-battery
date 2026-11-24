@@ -19,11 +19,12 @@ from env.data import DEFAULT_CSV, split_days
 
 OUT = Path("docs/img")
 SURFACE, INK, INK2, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9"
-BLUE, ORANGE, AQUA, YELLOW, GRAY = "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#898781"
+BLUE, ORANGE, AQUA, YELLOW, MAGENTA, GRAY = "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#898781"
 POLICY_STYLE = {   # colour + marker, so identity never relies on colour alone
     "do_nothing": ("Do nothing", GRAY, "o"),
     "self_consumption_causal": ("Self-consumption (causal)", BLUE, "s"),
     "rule_based": ("Rule-based (tuned, causal)", ORANGE, "^"),
+    "mpc": ("MPC (7-day forecast, causal)", MAGENTA, "P"),
     "self_consumption": ("Self-consumption (reactive)", YELLOW, "v"),
     "lp_oracle": ("LP oracle (perfect foresight)", AQUA, "D"),
 }
@@ -129,8 +130,8 @@ def fig_data():
 def fig_baselines():
     df = pd.read_csv("results/baselines.csv")
     summ = pd.read_csv("results/baselines_summary.csv")
-    order = ["lp_oracle", "self_consumption", "rule_based", "self_consumption_causal", "do_nothing"]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.6), sharex=True, sharey=True)
+    order = ["lp_oracle", "self_consumption", "mpc", "rule_based", "self_consumption_causal", "do_nothing"]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5.2), sharex=True, sharey=True)
     rng = np.random.default_rng(0)
     n = df[df.split == "test"].groupby("group").house.nunique()
     for ax, group, title in zip(axes, ["seen", "heldout"], [f"{n['seen']} homes used in training",
@@ -149,7 +150,8 @@ def fig_baselines():
         ax.tick_params(labelleft=(ax is axes[0]))
         ax.set_title(title, fontsize=11); ax.set_xlabel("cost saving vs. no battery use, % (test year)")
         ax.grid(axis="y", visible=False); ax.set_ylim(-0.6, len(order) - 0.4)
-    axes[0].set_xlim(-3, 52)
+    shown = df[(df.split == "test") & df.policy.isin(order)].saving_pct
+    axes[0].set_xlim(min(-3.0, shown.min() - 2), shown.max() + 6)   # every home stays inside the plot
     t = summ[(summ.split == "test") & (summ.group == "seen")].set_index("policy")
     fig.suptitle(f"Perfect foresight saves {t.loc['lp_oracle', 'saving_pct']:.0f} % of the bill; with only the information "
                  f"the agent has, simple rules save {t.loc['self_consumption_causal', 'saving_pct']:.0f} %",

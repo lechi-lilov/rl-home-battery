@@ -1,7 +1,7 @@
 """Evaluate all baselines on every household and split, and save tables + one example trajectory.
 
 Usage:  python -m baselines.evaluate_baselines
-Outputs: results/baselines.csv, results/baselines_summary.csv, results/rule_based_params.json,
+Outputs: results/baselines.csv, results/baselines_summary.csv, results/rule_based_params.json, results/mpc_params.json,
          results/baseline_trajectories.npz
 """
 from __future__ import annotations
@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from baselines import DoNothing, LPOracle, RuleBased, SelfConsumption, SelfConsumptionCausal
+from baselines import DoNothing, LPOracle, MPCForecast, MPCPersistence, RuleBased, SelfConsumption, SelfConsumptionCausal
+from baselines import mpc
 from baselines.rule_based import tune
 from env import EnergyEnv, EnvConfig, Tariff, load_data_config, load_houses
 from env.evaluation import mean_ci95, run_policy
@@ -37,9 +38,13 @@ def main() -> None:
     params, val_cost = tune({h: envs["val"][h] for h in groups["seen"]})
     (OUT / "rule_based_params.json").write_text(json.dumps(params, indent=2))
     print("tuned rule-based parameters:", params, f"(mean val cost {val_cost:.0f} won)")
+    # the MPC horizon is chosen the same way: validation split, seen houses only
+    mpc_params, mpc_costs = mpc.tune({h: envs["val"][h] for h in groups["seen"]}, run_policy)
+    (OUT / "mpc_params.json").write_text(json.dumps({**mpc_params, "val_mean_cost_won": mpc_costs}, indent=2))
+    print("tuned MPC:", mpc_params, {k: round(v) for k, v in mpc_costs.items()})
 
     # 2) evaluate every policy on every house of both splits
-    policies = [DoNothing(), SelfConsumptionCausal(), RuleBased(**params), SelfConsumption(), LPOracle()]
+    policies = [DoNothing(), SelfConsumptionCausal(), RuleBased(**params), MPCPersistence(mpc_params["horizon_hours"]), MPCForecast(**mpc_params), SelfConsumption(), LPOracle()]
     rows, traj = [], {}
     for split in ("val", "test"):
         for group, ids in groups.items():

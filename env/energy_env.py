@@ -42,6 +42,21 @@ class EnvConfig:
     reward_scale: float = 100.0
     reward_mode: str = "cost"
     terminal_value: bool = True
+    # How the value of stored energy reaches the agent:
+    #   "none":      once, as the terminal credit at the end of the episode
+    #   "potential": every step, as potential-based shaping F = g*Phi(s') - Phi(s) with Phi(s) = terminal_price * SoC
+    #                (Ng, Harada & Russell 1999).
+    # shaping_gamma g: with g = 1 the shaping terms telescope to the terminal credit, so an episode's rewards add up
+    # EXACTLY to the money saved (the evaluation metric). g < 1 would be policy-invariant only for the discounted
+    # problem and charges stored energy (1 - g) * Phi every hour; with g = 0.99 that is ~37 won/kWh per day, the size
+    # of the arbitrage margin, and pilots learned to empty the battery at a loss (documented in the report).
+    reward_shaping: str = "none"
+    shaping_gamma: float = 1.0
+    # Value of one kWh STORED in the battery (used by the terminal credit and the shaping potential):
+    #   "mean":        average tariff price x eta_discharge (what the energy would save if used at an average hour)
+    #   "replacement": cheapest tariff price / eta_charge (what it costs to put that kWh back in), so charging at
+    #                  the cheapest hour and just holding the energy earns exactly nothing
+    stored_energy_value: str = "mean"
     use_forecast: bool = False
     load_scale_kw: float = 5.0
     pv_scale_kw: float = 5.0
@@ -56,6 +71,12 @@ class EnvConfig:
     def __post_init__(self) -> None:
         if self.reward_mode not in ("cost", "savings"):
             raise ValueError("reward_mode must be 'cost' or 'savings'")
+        if self.stored_energy_value not in ("mean", "replacement"):
+            raise ValueError("stored_energy_value must be 'mean' or 'replacement'")
+        if self.reward_shaping not in ("none", "potential"):
+            raise ValueError("reward_shaping must be 'none' or 'potential'")
+        if self.reward_shaping == "potential" and not self.terminal_value:
+            raise ValueError("potential shaping values stored energy, so it needs terminal_value=True")
 
 
 class EnergyEnv(gym.Env):
@@ -85,7 +106,10 @@ class EnergyEnv(gym.Env):
         self.soc_lo = c.soc_min_frac * c.capacity_kwh
         self.soc_hi = c.soc_max_frac * c.capacity_kwh
         # value of one kWh left in the battery at the end of an episode (energy comes back with eta_discharge)
-        self.terminal_price = tariff.mean_price * c.eta_discharge
+        if c.stored_energy_value == "mean":
+            self.terminal_price = tariff.mean_price * c.eta_discharge
+        else:
+            self.terminal_price = tariff.min_price / c.eta_charge
         self.max_price = tariff.max_price
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
@@ -134,6 +158,7 @@ class EnergyEnv(gym.Env):
 
     def step(self, action):
         c, h, t = self.cfg, self.house, self.t
+        soc_before = self.soc
         a = float(np.clip(np.asarray(action, dtype=np.float64).reshape(-1)[0], -1.0, 1.0))
         p_req = a * c.p_max_kw
 
@@ -166,11 +191,18 @@ class EnergyEnv(gym.Env):
         self.t += 1
         self.steps += 1
 
+        if c.reward_shaping == "potential":
+            phi_before, phi_after = self.terminal_price * soc_before, self.terminal_price * self.soc
+            reward += (c.shaping_gamma * phi_after - phi_before) / c.reward_scale
+
         truncated = self.steps >= self.horizon       # time limit, the problem itself never ends
         terminal_credit = 0.0
         if truncated and c.terminal_value:
+            # always reported (the evaluation metric uses it); added to the reward only without shaping,
+            # because with shaping the value of stored energy has already been paid out step by step
             terminal_credit = self.terminal_price * (self.soc - self.soc_start)
-            reward += terminal_credit / c.reward_scale
+            if c.reward_shaping == "none":
+                reward += terminal_credit / c.reward_scale
         info = self._info(dict(p_batt_kw=p_batt, grid_import_kwh=grid_import, grid_export_kwh=grid_export,
                                price=price, cost_won=cost, terminal_credit_won=terminal_credit,
                                index=t))

@@ -4,7 +4,7 @@
 ![python](https://img.shields.io/badge/python-3.14-blue)
 ![gymnasium](https://img.shields.io/badge/env-Gymnasium-4c9be8)
 ![sb3](https://img.shields.io/badge/RL-Stable--Baselines3-2a78d6)
-![tests](https://img.shields.io/badge/tests-28%20passing-1baf7a)
+![tests](https://img.shields.io/badge/tests-35%20passing-1baf7a)
 
 A household with rooftop solar panels and a battery pays a **time-of-use (TOU) electricity tariff**. Every hour an RL agent decides how much to charge or discharge the battery so that the yearly electricity bill is as low as possible.
 
@@ -24,7 +24,7 @@ A household with rooftop solar panels and a battery pays a **time-of-use (TOU) e
 | **Data** | Real half-hourly load and PV of Australian homes (Ausgrid), real Korean TOU tariff (KEPCO) |
 | **Environment** | Own Gymnasium environment `EnergyEnv`, 1 step = 1 hour |
 | **Algorithms** | PPO and SAC (continuous power), DQN (5 discrete levels), via Stable-Baselines3 |
-| **Reference points** | Do nothing · PV self-consumption (causal and reactive) · tuned TOU rule · LP oracle |
+| **Reference points** | Do nothing · PV self-consumption (causal and reactive) · tuned TOU rule · MPC with forecast · LP oracle |
 | **Evaluation** | One full unseen year; 10 homes used in training + 24 homes never seen |
 
 ## Project status
@@ -32,10 +32,10 @@ A household with rooftop solar panels and a battery pays a **time-of-use (TOU) e
 | Step | State |
 |---|---|
 | Data selection, cleaning, hourly preprocessing | done |
-| Environment `EnergyEnv` (19 tests, `check_env` passes) | done |
-| Baselines and LP oracle (9 tests) | done |
+| Environment `EnergyEnv` (21 tests, `check_env` passes) | done |
+| Baselines: rules, MPC, LP oracle (14 tests) | done |
 | Evaluation protocol fixed before any RL training | done (see below) |
-| RL training: PPO, SAC, DQN | **not started yet** |
+| RL training: PPO, SAC, DQN | **in progress**: training pipeline done, first pilots running |
 | Hyper-parameter study, 5 seeds with confidence intervals | planned |
 | Learning curves, animated demo of the trained agent, final report | planned |
 
@@ -49,7 +49,7 @@ flowchart LR
     B --> C[("data/processed/<br/>hourly.csv.gz")]
     T["KEPCO TOU tariff<br/>configs/tariff_jeju.yaml"] --> D
     C --> D["EnergyEnv<br/>(Gymnasium)"]
-    D --> E["Baselines<br/>self-consumption, rule, LP oracle"]
+    D --> E["Baselines<br/>self-consumption, rule, MPC, LP oracle"]
     D --> F["RL agents<br/>PPO, SAC, DQN (planned)"]
     E --> G["results/ and figures"]
     F --> G
@@ -102,6 +102,8 @@ Residential TOU tariff of KEPCO (`주택용 계시별`, Jeju), from the tariff t
 | Do nothing | – | 0 % | 0 % | 0 % |
 | Self-consumption, **causal** | past hours + tariff, **same as the RL agent** | 7.4 % ± 2.3 | 28 % ± 7 | 6.9 % ± 3.1 |
 | Rule-based, tuned, **causal** | past hours + tariff, **same as the RL agent** | 7.3 % ± 1.8 | 27 % ± 5 | 5.8 % ± 2.2 |
+| MPC, persistence forecast (as in the literature) | past hours + tariff, **same as the RL agent** | 1.4 % ± 3.6 | 3 % ± 14 | 2.3 % ± 2.7 |
+| MPC, 7-day average forecast, tuned | past hours + tariff, **same as the RL agent** | 4.9 % ± 4.0 | 16 % ± 15 | 5.0 % ± 3.2 |
 | Self-consumption, reactive | **also the current hour** | 17.0 % ± 4.4 | 63 % ± 9 | 14.1 % ± 5.3 |
 | **LP oracle** | **the whole future** | **26.2 % ± 3.9** | 100 % | 23.0 % ± 4.4 |
 
@@ -111,6 +113,7 @@ What this tells us:
 
 * The battery is worth having: perfect foresight cuts the bill by about a quarter.
 * **Information is the bottleneck.** The same self-consumption idea saves 17 % when it sees the current hour and only 7 % when it has to act on the previous hour. The RL agent gets the past only, so the fair targets are the two *causal* baselines (~7 %). The reactive one is shown as a reference with an information advantage.
+* **MPC loses to the simple causal rules here.** It plans each day with a forecast of the home's load and PV, but household load is very noisy: "tomorrow looks like yesterday" misses by 71 % of the mean net load on average, and 34 % of the energy the plan discharges ends up exported for nothing. The planner itself is correct: fed the true future instead of the forecast it reaches exactly the oracle's 26.2 % (checked on all 10 training homes). Averaging the last 7 days (chosen on validation) helps (1.4 % → 4.9 %) but not enough. On a regular commercial load the same method reached 99 % of the optimum (Hussain et al., 2026), so this is a property of household data.
 * The tuned rule ended up never charging from the grid (`soc_target = 0`, see [`results/rule_based_params.json`](results/rule_based_params.json)), i.e. it became causal self-consumption with a small evening discharge. On validation data, a fixed charge-at-night rule did not pay off.
 * Yet the oracle *does* buy cheap night energy (figure at the top). Doing this well requires anticipating the next day's load and PV. That is exactly what an RL agent could learn from data, and the room between ~7 % and 26 % is what it can win.
 
@@ -122,6 +125,7 @@ The reference policies in detail:
 | Self-consumption (causal) | charge with the previous hour's PV surplus, discharge to cover the previous hour's deficit |
 | Self-consumption (reactive) | the same, but with the current hour's values, like a hybrid inverter measuring in real time |
 | Rule-based | charge in the cheapest tariff hours up to a target, discharge (at most the previous hour's load) in the most expensive hours, causal self-consumption in between; 4 parameters tuned by grid search on validation |
+| MPC | every midnight: forecast load and PV for the next 48 h as the average of the same hours over the last 7 days, solve the same LP as the oracle with this forecast, apply the first 24 h; horizon (24/48 h) and averaging window (1/7/14 days) chosen on validation. The 1-day window is the persistence forecast of the literature |
 | LP oracle | linear program over each evaluation episode with the exact environment physics, a true lower bound on cost |
 
 The oracle's plan, replayed in the environment, reproduces the LP cost to within 0.01 % (tested), so the environment and the optimiser agree on the physics.
@@ -156,8 +160,8 @@ python -m venv .venv
 .venv\Scripts\activate            # Windows   (Linux/macOS: source .venv/bin/activate)
 pip install -r requirements.txt
 
-python -m pytest -q               # 28 tests: environment, tariff, splits, baselines, LP vs. environment
-python -m baselines.evaluate_baselines   # writes results/*.csv (about 4 minutes)
+python -m pytest -q               # 35 tests: environment, tariff, splits, reward shaping, baselines, MPC causality, LP vs. environment
+python -m baselines.evaluate_baselines   # writes results/*.csv (about 10 minutes)
 python -m scripts.make_figures    # rebuilds docs/img/*.png
 ```
 
@@ -174,14 +178,15 @@ The code runs on CPU only. All random choices use fixed seeds.
 
 ```
 env/            EnergyEnv, tariff, data loading and splits, evaluation helpers, DQN action wrapper
-baselines/      do_nothing, self_consumption (causal + reactive), rule_based, lp_optimal, evaluate_baselines
-configs/        env.yaml (battery, reward), tariff_jeju.yaml, data.yaml (homes, splits)
+baselines/      do_nothing, self_consumption (causal + reactive), rule_based, mpc, lp_optimal, evaluate_baselines
+agents/         train.py (PPO / SAC / DQN with validation checkpointing), policy_adapter.py
+configs/        env.yaml (battery, reward), algos.yaml (RL hyper-parameters), tariff_jeju.yaml, data.yaml (homes, splits)
 scripts/        download_data, 01_preprocess, make_figures
 tests/          test_env.py, test_baselines.py
 data/processed/ hourly.csv.gz (34 homes x 3 years)
 results/        baseline tables and trajectories
 docs/img/       figures used in this README
-agents/ experiments/ models/ report/    planned: RL training, runs, saved models, slides
+experiments/ models/ report/    planned: sweeps and final runs, saved models, slides
 ```
 
 ## Assumptions and limitations
@@ -199,4 +204,5 @@ agents/ experiments/ models/ report/    planned: RL training, runs, saved models
 
 * **Load and PV data:** Ausgrid, *Solar Home Electricity Data* (CC BY 3.0 AU). Dataset paper: E. L. Ratnam, S. R. Weller, C. M. Kellett, A. T. Murray, "Residential load and rooftop PV generation: an Australian distribution network dataset", *International Journal of Sustainable Energy*, 2017 (reference as cited in P. Haessig's repository). Archive copy: P. Haessig, 2026.
 * **Tariff:** KEPCO electricity tariff table, effective 2023-05-16.
+* **MPC scheme:** H. M. Hussain, W. Samar, L. Klein, P. Nardelli, "Comparative Evaluation of MILP, MPC, and Reinforcement Learning for Commercial Battery Dispatch Under Time-of-Use Tariffs", arXiv:2609.14776, 2026.
 * **Tools:** Gymnasium, Stable-Baselines3, PyTorch, SciPy (HiGHS linear programming), pandas, matplotlib.

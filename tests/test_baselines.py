@@ -4,7 +4,8 @@ import dataclasses
 import numpy as np
 import pytest
 
-from baselines import DoNothing, LPOracle, RuleBased, SelfConsumption, SelfConsumptionCausal
+from baselines import DoNothing, LPOracle, MPCForecast, MPCPersistence, RuleBased, SelfConsumption, SelfConsumptionCausal
+from baselines.mpc import forecast_indices, persistence_indices
 from env import EnergyEnv, EnvConfig, Tariff, load_data_config, load_houses
 from env.evaluation import mean_ci95, run_policy
 
@@ -42,7 +43,7 @@ def test_lp_matches_env_with_nonzero_degradation_and_export_price(tariff):
 def test_nobody_beats_the_oracle(val_env):
     # untuned default rule parameters may even lose to doing nothing; only the oracle bound is guaranteed
     costs = {p.name: run_policy(val_env, p)["total_cost"]
-             for p in (DoNothing(), SelfConsumption(), SelfConsumptionCausal(), RuleBased(), LPOracle())}
+             for p in (DoNothing(), SelfConsumption(), SelfConsumptionCausal(), RuleBased(), MPCPersistence(), LPOracle())}
     assert costs["lp_oracle"] <= min(costs.values()) + 1e-6
     assert costs["lp_oracle"] < costs["do_nothing"]
     assert costs["self_consumption"] <= costs["do_nothing"] + 1e-6
@@ -103,3 +104,46 @@ def test_mean_ci95():
     m, half = mean_ci95([1.0, 2.0, 3.0])
     assert m == 2.0
     assert half == pytest.approx(4.302653 * 1.0 / np.sqrt(3), rel=1e-5)  # t(0.975, 2) * s / sqrt(n)
+
+
+def test_persistence_forecast_uses_only_past_hours():
+    for H in (24, 48, 72):
+        idx = persistence_indices(1000, H)
+        assert idx.max() < 1000                                   # strictly the past
+        assert np.all((1000 + np.arange(H) - idx) % 24 == 0)      # same clock hour
+        many = forecast_indices(1000, H, 7)
+        assert many.shape == (7, H) and many.max() < 1000 and np.all((1000 + np.arange(H) - many) % 24 == 0)
+        assert np.array_equal(many[0], idx)
+
+
+@pytest.mark.parametrize("horizon,n_days", [(24, 1), (48, 1), (48, 7)])
+def test_mpc_first_day_does_not_depend_on_the_future(val_env, horizon, n_days):
+    """Change every load/PV value from the decision time on: the first day's plan must not change."""
+    def first_day_actions():
+        mpc = MPCForecast(horizon, n_days)
+        obs, _ = val_env.reset(seed=0, options={"segment": 5})
+        mpc.reset(val_env)
+        out = []
+        for _ in range(24):
+            a = mpc.act(obs, val_env)
+            out.append(a)
+            obs, *_ = val_env.step(a)
+        return np.array(out)
+
+    original = val_env.house
+    t0 = original.segments[5][0]
+    before = first_day_actions()
+    load, pv = original.load.copy(), original.pv.copy()
+    load[t0:] *= 3.0
+    pv[t0:] = 0.0
+    try:
+        val_env.houses[original.house_id] = dataclasses.replace(original, load=load, pv=pv)
+        after = first_day_actions()
+    finally:
+        val_env.houses[original.house_id] = original
+    assert np.array_equal(before, after)
+
+
+def test_mpc_never_beats_the_oracle(val_env):
+    costs = {p.name: run_policy(val_env, p)["total_cost"] for p in (MPCForecast(48, 7), LPOracle())}
+    assert costs["lp_oracle"] <= costs["mpc"] + 1e-6

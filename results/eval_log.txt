@@ -1,0 +1,17 @@
+tuned rule-based parameters: {'soc_target': 0.0, 'charge_frac': 0.1, 'discharge_frac': 0.1, 'mid_selfcons': True} (mean val cost 346120 won)
+tuned MPC: {'horizon_hours': 48, 'n_days': 7} {'H24_n1': 370612, 'H24_n7': 358553, 'H24_n14': 357991, 'H48_n1': 362205, 'H48_n7': 352308, 'H48_n14': 352590}
+split   group                  policy  n_houses  saving_pct  saving_ci95  captured_pct  captured_ci95
+ test    seen              do_nothing        10        0.00         0.00          0.00           0.00
+ test    seen self_consumption_causal        10        7.36         2.28         27.51           6.58
+ test    seen              rule_based        10        7.25         1.76         27.42           5.00
+ test    seen         mpc_persistence        10        1.39         3.64          3.32          13.91
+ test    seen                     mpc        10        4.86         4.02         16.09          14.92
+ test    seen        self_consumption        10       17.01         4.41         62.94           9.31
+ test    seen               lp_oracle        10       26.20         3.87        100.00           0.00
+ test heldout              do_nothing        24        0.00         0.00          0.00           0.00
+ test heldout self_consumption_causal        24        6.90         3.11         24.58           6.32
+ test heldout              rule_based        24        5.78         2.22         21.10           4.76
+ test heldout         mpc_persistence        24        2.31         2.75          4.74           9.91
+ test heldout                     mpc        24        5.02         3.18         15.89           8.97
+ test heldout        self_consumption        24       14.05         5.32         52.08          10.04
+ test heldout               lp_oracle        24       23.00         4.37        100.00           0.00

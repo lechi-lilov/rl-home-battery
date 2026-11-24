@@ -128,7 +128,7 @@ def test_full_battery_cannot_charge_and_empty_cannot_discharge(train_houses, tar
 
 # ------------------------------------------------------------ reward / cost
 def test_idle_policy_cost_equals_independent_calculation(test_houses, tariff):
-    env = make(test_houses, tariff, mode="eval", house_id=POOL[0], terminal_value=False)
+    env = make(test_houses, tariff, mode="eval", house_id=POOL[0], terminal_value=False, reward_shaping="none")
     env.reset(seed=0)
     h = env.house
     done = False
@@ -141,20 +141,20 @@ def test_idle_policy_cost_equals_independent_calculation(test_houses, tariff):
 
 
 def test_reward_is_negative_scaled_cost(train_houses, tariff):
-    env = make(train_houses, tariff, terminal_value=False)
+    env = make(train_houses, tariff, terminal_value=False, reward_shaping="none", reward_mode="cost")
     env.reset(seed=3)
     _, r, _, _, info = env.step([0.0])
     assert r == pytest.approx(-info["cost_won"] / env.cfg.reward_scale)
 
 
 def test_savings_reward_is_zero_when_idle_and_shifts_policy_ranking_not_at_all(train_houses, tariff):
-    env = make(train_houses, tariff, reward_mode="savings", terminal_value=False)
+    env = make(train_houses, tariff, reward_mode="savings", terminal_value=False, reward_shaping="none")
     env.reset(seed=3)
     _, r, _, _, _ = env.step([0.0])
     assert r == pytest.approx(0.0)
     # "savings" = "cost" reward + (cost without battery)/scale, and that term does not depend on the action
-    a = make(train_houses, tariff, reward_mode="cost", terminal_value=False)
-    b = make(train_houses, tariff, reward_mode="savings", terminal_value=False)
+    a = make(train_houses, tariff, reward_mode="cost", terminal_value=False, reward_shaping="none")
+    b = make(train_houses, tariff, reward_mode="savings", terminal_value=False, reward_shaping="none")
     a.reset(seed=5)
     b.reset(seed=5)
     for act in ([0.7], [-0.4], [0.0]):
@@ -243,3 +243,67 @@ def test_price_lookahead_matches_tariff(train_houses, tariff):
     obs, _ = env.reset(seed=4)
     h, t = env.house, env.t
     assert obs[6:12] == pytest.approx(h.price[t:t + 6] / tariff.max_price, rel=1e-6)
+
+
+def test_potential_shaping_with_gamma_one_equals_terminal_credit(train_houses, tariff):
+    """With gamma = 1 the shaping terms telescope to terminal_price * (SoC_end - SoC_start), i.e. exactly the
+    terminal credit, so both reward variants give the same episode return for the same actions."""
+    plain = make(train_houses, tariff, reward_shaping="none")
+    shaped = make(train_houses, tariff, reward_shaping="potential", shaping_gamma=1.0)
+    plain.reset(seed=11)
+    shaped.reset(seed=11)
+    rng = np.random.default_rng(3)
+    ret_plain = ret_shaped = 0.0
+    done = False
+    while not done:
+        a = rng.uniform(-1, 1, size=1)
+        _, r1, _, done, info = plain.step(a)
+        _, r2, *_ = shaped.step(a)
+        ret_plain += r1
+        ret_shaped += r2
+    assert info["terminal_credit_won"] != 0.0
+    assert ret_shaped == pytest.approx(ret_plain, rel=1e-9)
+
+
+def test_potential_shaping_step_value(train_houses, tariff):
+    env = make(train_houses, tariff, reward_shaping="potential", shaping_gamma=0.99, terminal_value=True, reward_mode="cost")
+    env.reset(seed=2, options={"init_soc_frac": 0.5})
+    soc0 = env.soc
+    _, r, _, _, info = env.step([0.4])
+    expected = (-info["cost_won"] + 0.99 * env.terminal_price * env.soc - env.terminal_price * soc0) / env.cfg.reward_scale
+    assert r == pytest.approx(expected)
+    with pytest.raises(ValueError):
+        EnvConfig.from_yaml(reward_shaping="potential", terminal_value=False)
+
+
+@pytest.mark.parametrize("mode", ["cost", "savings"])
+@pytest.mark.parametrize("shaping", ["none", "potential"])
+def test_episode_rewards_add_up_to_the_money_metric(train_houses, tariff, mode, shaping):
+    """Regression test for a real bug: with shaping_gamma < 1 a money-losing policy got a HIGHER reward than doing
+    nothing. With the default config the undiscounted episode return must equal the evaluation metric exactly."""
+    env = make(train_houses, tariff, reward_mode=mode, reward_shaping=shaping)
+    assert env.cfg.shaping_gamma == 1.0
+    rng = np.random.default_rng(7)
+    for seed in range(5):
+        env.reset(seed=seed)
+        ret, done = 0.0, False
+        while not done:
+            _, r, _, done, info = env.step(rng.uniform(-1, 1, size=1))
+            ret += r
+        total_cost = info["cum_cost_won"] + info["cum_degradation_won"] - info["terminal_credit_won"]
+        money = -total_cost if mode == "cost" else info["cum_nothing_won"] - total_cost
+        assert ret == pytest.approx(money / env.cfg.reward_scale, rel=1e-9, abs=1e-9)
+
+
+def test_replacement_value_makes_buy_and_hold_worth_nothing(train_houses, tariff):
+    """With stored_energy_value=replacement, charging at the cheapest price and holding earns zero reward."""
+    env = make(train_houses, tariff, reward_mode="savings", reward_shaping="potential",
+               stored_energy_value="replacement")
+    assert env.terminal_price == pytest.approx(tariff.min_price / env.cfg.eta_charge)
+    env.reset(seed=0, options={"init_soc_frac": 0.0})
+    h = env.house
+    # move to an hour with the cheapest price and no PV surplus
+    while not (h.price[env.t] == tariff.min_price and h.pv[env.t] <= h.load[env.t]):
+        env.step([0.0])
+    _, r, *_ = env.step([0.2])            # buy 1 kWh from the grid, store 0.95 kWh
+    assert r == pytest.approx(0.0, abs=1e-9)

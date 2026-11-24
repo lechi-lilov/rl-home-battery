@@ -10,3 +10,9 @@ data/raw/
 claude.md
 CLAUDE.md
 .vscode/
+
+# papers (copyrighted PDFs, local reading only)
+papers/
+
+# training runs (large; final models are copied to models/)
+runs/

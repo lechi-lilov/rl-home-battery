@@ -52,6 +52,10 @@ class Tariff:
         return float(self.table[1:].max())
 
     @property
+    def min_price(self) -> float:
+        return float(self.table[1:].min())
+
+    @property
     def mean_price(self) -> float:
         """Average price over a typical year (months weighted by their number of days)."""
         per_month = self.table[1:].mean(axis=1)
