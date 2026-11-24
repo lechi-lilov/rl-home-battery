@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from baselines import DoNothing, LPOracle, RuleBased, SelfConsumption
+from baselines import DoNothing, LPOracle, RuleBased, SelfConsumption, SelfConsumptionCausal
 from baselines.rule_based import tune
 from env import EnergyEnv, EnvConfig, Tariff, load_data_config, load_houses
 from env.evaluation import mean_ci95, run_policy
@@ -39,7 +39,7 @@ def main() -> None:
     print("tuned rule-based parameters:", params, f"(mean val cost {val_cost:.0f} won)")
 
     # 2) evaluate every policy on every house of both splits
-    policies = [DoNothing(), SelfConsumption(), RuleBased(**params), LPOracle()]
+    policies = [DoNothing(), SelfConsumptionCausal(), RuleBased(**params), SelfConsumption(), LPOracle()]
     rows, traj = [], {}
     for split in ("val", "test"):
         for group, ids in groups.items():

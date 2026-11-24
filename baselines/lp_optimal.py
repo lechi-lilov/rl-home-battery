@@ -52,13 +52,18 @@ def solve_lp(load, pv, price, cfg, soc0: float, terminal_price: float) -> dict:
 
 
 class LPOracle:
+    """Solves one LP per evaluation episode (segment) at reset, then replays the plan."""
     name = "lp_oracle"
+
+    def __init__(self):
+        self.objectives: list[float] = []   # LP optimum of every episode planned so far
 
     def reset(self, env):
         h, s, T = env.house, env.t, env.horizon
         v = env.terminal_price if env.cfg.terminal_value else 0.0
         plan = solve_lp(h.load[s:s + T], h.pv[s:s + T], h.price[s:s + T], env.cfg, env.soc, v)
-        self.start, self.p_batt, self.objective = s, plan["p_batt"], plan["objective"]
+        self.start, self.p_batt = s, plan["p_batt"]
+        self.objectives.append(plan["objective"])
 
     def act(self, obs, env):
         p = self.p_batt[env.t - self.start] / env.cfg.p_max_kw

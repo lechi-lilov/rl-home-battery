@@ -7,6 +7,7 @@ import pytest
 from gymnasium.utils.env_checker import check_env
 
 from env import DiscreteActionWrapper, EnergyEnv, EnvConfig, Tariff, load_data_config, load_houses
+from env.data import split_days
 
 DATA_CFG = load_data_config()
 POOL = DATA_CFG["pool_houses"]
@@ -133,7 +134,8 @@ def test_idle_policy_cost_equals_independent_calculation(test_houses, tariff):
     done = False
     while not done:
         _, _, _, done, info = env.step([0.0])
-    expected = (h.price[h.i0:h.i1] * np.maximum(h.load[h.i0:h.i1] - h.pv[h.i0:h.i1], 0)).sum()
+    s, e = h.segments[0]
+    expected = (h.price[s:e] * np.maximum(h.load[s:e] - h.pv[s:e], 0)).sum()
     assert info["cum_cost_won"] == pytest.approx(expected)
     assert info["cum_nothing_won"] == pytest.approx(expected)   # idle battery == no battery
 
@@ -175,23 +177,42 @@ def test_terminal_value_charges_for_energy_removed(train_houses, tariff):
 
 
 # ---------------------------------------------- no leakage / split discipline
-def test_train_episodes_stay_inside_train_split(train_houses, tariff):
-    env = make(train_houses, tariff)
-    for seed in range(60):
+def test_splits_are_disjoint_and_validation_covers_every_month():
+    train, val, test = (split_days(s, DATA_CFG) for s in ("train", "val", "test"))
+    assert not set(train) & set(val) and not set(train) & set(test) and not set(val) & set(test)
+    assert train.max() < test.min() and val.max() < test.min()       # test comes after all development data
+    assert sorted(set(val.month)) == list(range(1, 13))              # every season is validated
+    assert set(val.day) == set(range(8, 15))                         # days 8..14 of each month
+    assert len(val) == 24 * 7 and len(test) == 365                   # 24 months x 1 week, one full year
+
+
+def test_segments_match_split_days(tariff):
+    h = load_houses(POOL[:1], "val", tariff)[POOL[0]]
+    hours = np.concatenate([np.arange(s, e) for s, e in h.segments])
+    days = pd.DatetimeIndex(h.timestamps(hours).normalize().unique())
+    assert days.equals(split_days("val", DATA_CFG))
+    assert all(h.hour[s] == 0 for s, _ in h.segments)               # every segment starts at midnight
+
+
+def test_train_episodes_never_touch_validation_or_test_days(train_houses, tariff):
+    """Not even as INPUT: observations look back up to 24 h (previous hour, persistence forecast),
+    so the look-back window must also consist of training days only."""
+    env = make(train_houses, tariff, use_forecast=True)
+    allowed = set(split_days("train", DATA_CFG))
+    for seed in range(300):
         env.reset(seed=seed)
         h = env.house
-        assert h.i0 <= env.t and env.t + env.horizon <= h.i1
-        assert h.hour[env.t] == 0                      # episodes start at midnight
-    # the train split really ends before the validation / test periods
-    ts_end = pd.Timestamp(DATA_CFG["splits"]["train"][1])
-    assert ts_end < pd.Timestamp(DATA_CFG["splits"]["val"][0]) < pd.Timestamp(DATA_CFG["splits"]["test"][0])
+        assert h.hour[env.t] == 0                                     # episodes start at midnight
+        seen_hours = np.arange(env.t - 24, env.t + env.horizon)       # look-back window + episode
+        assert set(h.timestamps(seen_hours).normalize()) <= allowed
 
 
 def test_eval_covers_exactly_the_test_year(test_houses, tariff):
     env = make(test_houses, tariff, mode="eval", house_id=POOL[0])
     env.reset(seed=0)
+    assert len(env.house.segments) == 1
     assert env.horizon == 365 * 24
-    assert env.t == env.house.i0
+    assert env.house.timestamps([env.t])[0] == pd.Timestamp("2012-07-01")
 
 
 def test_observation_uses_only_past_load_and_pv(train_houses, tariff):

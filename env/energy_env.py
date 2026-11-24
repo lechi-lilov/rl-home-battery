@@ -25,6 +25,7 @@ from env.tariff import Tariff
 
 DT = 1.0  # hours per step
 FORECAST_HOURS = 3  # persistence forecast covers hours t, t+1, t+2
+LOOKBACK_HOURS = 24  # the oldest data an observation can contain is from t - 24
 
 
 @dataclass
@@ -58,8 +59,10 @@ class EnvConfig:
 
 
 class EnergyEnv(gym.Env):
-    """mode="train": random house and start day, `episode_days` long, random initial SoC.
-    mode="eval": the whole split of one house, starting at the first hour, SoC at 50 % of the usable range."""
+    """mode="train": random house and start day, `episode_days` long, random initial SoC; the episode
+    always lies inside one contiguous segment of the split, so it never touches validation days.
+    mode="eval": one segment of one house (reset option "segment"), SoC at 50 % of the usable range.
+    `env.evaluation.run_policy` loops over all segments."""
 
     metadata = {"render_modes": []}
 
@@ -72,6 +75,7 @@ class EnergyEnv(gym.Env):
         self.tariff = tariff
         self.houses = houses
         self.house_ids = sorted(houses)
+        self._start_cache: dict[tuple[int, int], np.ndarray] = {}
         self.mode = mode
         self.fixed_house = house_id
         if mode == "eval" and house_id is None and len(houses) > 1:
@@ -104,17 +108,17 @@ class EnergyEnv(gym.Env):
         h = self.house
 
         if self.mode == "eval":
-            self.horizon = options.get("horizon", h.i1 - h.i0)
-            start = options.get("start", h.i0)
+            # one evaluation episode = one segment of the split (the test year is a single segment,
+            # validation has one segment per month)
+            seg_start, seg_end = h.segments[options.get("segment", 0)]
+            start = options.get("start", seg_start)
+            self.horizon = options.get("horizon", seg_end - start)
         else:
             self.horizon = options.get("horizon", self.cfg.episode_days * 24)
-            # start at midnight of a random day such that the episode fits inside the split
-            n_days = (h.i1 - h.i0 - self.horizon) // 24 + 1
-            if n_days < 1:
-                raise ValueError("episode is longer than the split")
-            start = options.get("start", h.i0 + 24 * int(self.np_random.integers(n_days)))
-        if not (h.i0 <= start and start + self.horizon <= h.i1):
-            raise ValueError("episode must lie inside the split")
+            starts = self._train_starts(h, self.horizon)
+            start = options.get("start", int(starts[self.np_random.integers(len(starts))]))
+        if not any(s <= start and start + self.horizon <= e for s, e in h.segments):
+            raise ValueError("episode must lie inside one segment of the split")
 
         frac = options.get("init_soc_frac")
         if frac is None:
@@ -173,6 +177,22 @@ class EnergyEnv(gym.Env):
         return self._obs(), float(reward), False, truncated, info
 
     # --------------------------------------------------------------- helpers
+    def _train_starts(self, h: HouseData, horizon: int) -> np.ndarray:
+        """All midnights from which an episode of `horizon` hours fits inside one segment (cached).
+
+        Episodes start at least LOOKBACK_HOURS after the segment start, because observations look back
+        up to 24 h. Otherwise the first observations of an episode could contain data from the days
+        just before the segment, i.e. validation days.
+        """
+        key = (h.house_id, horizon)
+        if key not in self._start_cache:
+            starts = [np.arange(s + LOOKBACK_HOURS, e - horizon + 1, 24) for s, e in h.segments]
+            starts = np.concatenate(starts) if starts else np.array([], dtype=int)
+            if len(starts) == 0:
+                raise ValueError("episode is longer than every segment of the split")
+            self._start_cache[key] = starts
+        return self._start_cache[key]
+
     def _obs(self) -> np.ndarray:
         c, h, t = self.cfg, self.house, self.t
         ang_h = 2 * np.pi * h.hour[t] / 24

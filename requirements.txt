@@ -1,9 +1,10 @@
-numpy
-pandas
-scipy
-gymnasium
-stable-baselines3
-torch
-matplotlib
-pyyaml
-pytest
+# Exact versions used for all results in this repository (Python 3.14, CPU only).
+numpy==2.5.5
+pandas==3.1.1
+scipy==1.18.1
+gymnasium==1.4.0
+stable_baselines3==2.9.2
+torch==2.15.0
+matplotlib==3.11.2
+PyYAML==6.0.4
+pytest==9.2.0

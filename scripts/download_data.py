@@ -2,7 +2,7 @@
 
 Ausgrid removed the dataset from its own website in 2026. The only complete copy we found is the
 archive published by P. Haessig (see README, "Data"). Skip this step if you use the processed file
-data/processed/hourly.csv that is committed to the repository.
+data/processed/hourly.csv.gz that is committed to the repository.
 
 Usage:  python scripts/download_data.py
 """

@@ -1,6 +1,7 @@
 source: Ausgrid Solar Home Electricity Data (CC BY 3.0 AU), 2010-07-01..2013-06-30
-selection_rule: all channels complete for 1096 days and daily GC+CL load within the
-  25-75th percentile of all 300 houses; rng seed 42
+selection_rule: 'all channels complete for 1096 days and daily GC+CL load within the
+  25-75th percentile of all 300 houses (147 eligible). rng seed 42: 10 training +
+  4 held-out homes; rng seed 43: 20 more held-out homes from the rest'
 resolution: hourly (kWh per hour == mean kW)
 load_definition: GC + CL (CL only where present); pv = GG
 pool_houses:
@@ -19,6 +20,26 @@ heldout_houses:
 - 26
 - 222
 - 143
+- 167
+- 5
+- 74
+- 118
+- 154
+- 116
+- 124
+- 234
+- 122
+- 63
+- 102
+- 209
+- 76
+- 262
+- 140
+- 10
+- 75
+- 225
+- 190
+- 99
 houses:
   280:
     pv_kwp: 1.5
@@ -62,13 +83,73 @@ houses:
   143:
     pv_kwp: 2.1
     has_controlled_load: false
+  167:
+    pv_kwp: 2.72
+    has_controlled_load: true
+  5:
+    pv_kwp: 1.0
+    has_controlled_load: true
+  74:
+    pv_kwp: 4.04
+    has_controlled_load: false
+  118:
+    pv_kwp: 1.5
+    has_controlled_load: true
+  154:
+    pv_kwp: 1.0
+    has_controlled_load: true
+  116:
+    pv_kwp: 2.5
+    has_controlled_load: false
+  124:
+    pv_kwp: 1.2
+    has_controlled_load: false
+  234:
+    pv_kwp: 1.65
+    has_controlled_load: true
+  122:
+    pv_kwp: 1.5
+    has_controlled_load: true
+  63:
+    pv_kwp: 1.0
+    has_controlled_load: false
+  102:
+    pv_kwp: 2.0
+    has_controlled_load: false
+  209:
+    pv_kwp: 1.0
+    has_controlled_load: true
+  76:
+    pv_kwp: 1.5
+    has_controlled_load: false
+  262:
+    pv_kwp: 1.0
+    has_controlled_load: false
+  140:
+    pv_kwp: 1.0
+    has_controlled_load: true
+  10:
+    pv_kwp: 1.05
+    has_controlled_load: true
+  75:
+    pv_kwp: 8.0
+    has_controlled_load: true
+  225:
+    pv_kwp: 1.1
+    has_controlled_load: true
+  190:
+    pv_kwp: 1.4
+    has_controlled_load: false
+  99:
+    pv_kwp: 1.0
+    has_controlled_load: true
 splits:
-  train:
-  - '2010-07-01'
-  - '2012-03-31'
-  val:
-  - '2012-04-01'
-  - '2012-06-30'
+  development:
+    start: '2010-07-01'
+    end: '2012-06-30'
+  validation_days_of_month:
+  - 8
+  - 14
   test:
-  - '2012-07-01'
-  - '2013-06-30'
+    start: '2012-07-01'
+    end: '2013-06-30'

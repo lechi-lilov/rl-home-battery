@@ -1,8 +1,10 @@
 """Baseline tests: the LP oracle must agree with the environment, and no policy may beat it."""
+import dataclasses
+
 import numpy as np
 import pytest
 
-from baselines import DoNothing, LPOracle, RuleBased, SelfConsumption
+from baselines import DoNothing, LPOracle, RuleBased, SelfConsumption, SelfConsumptionCausal
 from env import EnergyEnv, EnvConfig, Tariff, load_data_config, load_houses
 from env.evaluation import mean_ci95, run_policy
 
@@ -22,10 +24,11 @@ def val_env(tariff):
 
 
 def test_lp_plan_replayed_in_env_matches_lp_objective(val_env):
-    """Independent check that LP physics == environment physics."""
+    """Independent check that LP physics == environment physics (one LP per validation week)."""
     lp = LPOracle()
     res = run_policy(val_env, lp)
-    assert res["total_cost"] == pytest.approx(lp.objective, rel=1e-4)
+    assert res["n_segments"] == len(lp.objectives) == 24
+    assert res["total_cost"] == pytest.approx(sum(lp.objectives), rel=1e-4)
 
 
 def test_lp_matches_env_with_nonzero_degradation_and_export_price(tariff):
@@ -33,16 +36,38 @@ def test_lp_matches_env_with_nonzero_degradation_and_export_price(tariff):
     cfg = EnvConfig.from_yaml(degradation_cost=15.0, export_price=40.0)
     env = EnergyEnv(houses, tariff, cfg, mode="eval", house_id=HOUSE)
     lp = LPOracle()
-    assert run_policy(env, lp)["total_cost"] == pytest.approx(lp.objective, rel=1e-4)
+    assert run_policy(env, lp)["total_cost"] == pytest.approx(sum(lp.objectives), rel=1e-4)
 
 
 def test_nobody_beats_the_oracle(val_env):
     # untuned default rule parameters may even lose to doing nothing; only the oracle bound is guaranteed
     costs = {p.name: run_policy(val_env, p)["total_cost"]
-             for p in (DoNothing(), SelfConsumption(), RuleBased(), LPOracle())}
+             for p in (DoNothing(), SelfConsumption(), SelfConsumptionCausal(), RuleBased(), LPOracle())}
     assert costs["lp_oracle"] <= min(costs.values()) + 1e-6
     assert costs["lp_oracle"] < costs["do_nothing"]
     assert costs["self_consumption"] <= costs["do_nothing"] + 1e-6
+
+
+@pytest.mark.parametrize("policy", [SelfConsumptionCausal(), RuleBased(mid_selfcons=True)], ids=lambda p: p.name)
+def test_causal_baselines_ignore_the_current_hour(val_env, policy):
+    """The causal baselines must have the same information as the RL agent: nothing from hour t itself."""
+    obs, _ = val_env.reset(seed=0, options={"segment": 3})
+    original = val_env.house
+    for _ in range(10):                      # move into the day so mid/peak hours are covered too
+        obs, *_ = val_env.step(policy.act(obs, val_env))
+    try:
+        for _ in range(14):
+            t = val_env.t
+            a = policy.act(obs, val_env)
+            load, pv = original.load.copy(), original.pv.copy()
+            load[t] += 3.0
+            pv[t] += 2.0                     # change the CURRENT hour only
+            val_env.house = dataclasses.replace(original, load=load, pv=pv)
+            assert np.array_equal(policy.act(obs, val_env), a)
+            val_env.house = original
+            obs, *_ = val_env.step(a)
+    finally:
+        val_env.house = original
 
 
 def test_do_nothing_saves_nothing(val_env):
